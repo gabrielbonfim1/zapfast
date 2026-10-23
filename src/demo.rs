@@ -11291,6 +11291,40 @@ mod tests {
         }
     }
 
+    /// Forward in a chat's message menu starts a selection holding that
+    /// message instead of opening the recipient picker.
+    #[test]
+    fn forward_in_the_message_menu_starts_a_selection() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = app();
+        app.attach(&ctx);
+        let chat = sample_ids()[0].to_owned();
+        render(&mut app, &ctx);
+        app.open_message_menu = Some("ada-reply".into());
+        render(&mut app, &ctx);
+        let nodes = accessible_nodes(&mut app, &ctx, Vec::new());
+        let pos = nodes
+            .iter()
+            .find(|(label, _, _)| label == "Forward")
+            .map(|(_, _, pos)| *pos)
+            .expect("the menu offers Forward");
+        let press = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        accessible_nodes(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(pos), press(true)],
+        );
+        accessible_nodes(&mut app, &ctx, vec![press(false)]);
+        assert_eq!(app.selection, Some((chat, vec!["ada-reply".to_owned()])));
+        assert!(app.dialog.is_none(), "the picker waits for the selection bar");
+    }
+
     #[test]
     fn enter_submits_the_locked_chat_code_and_keeps_wrong_codes_locked() {
         for code in ["wrong-code", "demo-code"] {

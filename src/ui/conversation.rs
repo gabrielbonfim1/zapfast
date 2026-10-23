@@ -5968,10 +5968,18 @@ fn context_menu(
     if crate::app::can_select(&message.content)
         && widgets::menu_item(ui, &palette, Some(Icon::Forward), "Forward")
     {
-        actions.push(Action::ShowDialog(Dialog::Forward {
-            chat: chat.clone(),
-            messages: vec![message.id.clone()],
-        }));
+        // In the chat, as on WhatsApp Web, Forward starts a selection with
+        // this message ticked so more can join before the selection bar's
+        // Forward… picks the chats. A list has no rows to add, so it goes
+        // straight to the picker.
+        if matches!(origin, MenuOrigin::List) {
+            actions.push(Action::ShowDialog(Dialog::Forward {
+                chat: chat.clone(),
+                messages: vec![message.id.clone()],
+            }));
+        } else {
+            actions.push(Action::SelectMessage(message.id.clone()));
+        }
     }
     // A photo opens the viewer on its own click; a clip plays in its bubble
     // there, so this is how the album is reached from a chat that holds no

@@ -39,6 +39,11 @@ edit, the message keeps its earlier text.
 **Development builds** also show when your message was delivered and read when
 you click its time or ticks, as on WhatsApp.
 
+**Forward** in a message's menu starts a selection with that message ticked,
+as in WhatsApp Web, so you can tick more before pressing **Forward…** at the
+bottom right (see [Selecting messages](#selecting-messages) below). From the
+starred list it opens the recipient picker straight away.
+
 Forwarding opens a recipient picker. Select up to five writable chats, as on
 WhatsApp; a message labelled as forwarded many times goes to one chat at a
 time. With one chat selected, **Forward** sends it straight away. With
