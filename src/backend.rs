@@ -396,6 +396,8 @@ pub enum Command {
         /// Sends every file as a document with its original bytes, instead
         /// of turning pictures, videos and audio into media messages.
         documents: bool,
+        /// Sends the one supported photo as a WhatsApp view-once message.
+        view_once: bool,
         caption: Option<String>,
         mentions: Vec<String>,
         /// The message the first file replies to.
@@ -407,6 +409,8 @@ pub enum Command {
         width: u32,
         height: u32,
         rgba: Vec<u8>,
+        /// Sends this pasted picture as a WhatsApp view-once message.
+        view_once: bool,
         caption: Option<String>,
         mentions: Vec<String>,
         quoting: Option<crate::model::ReplyTarget>,
@@ -512,6 +516,11 @@ pub enum Command {
     FirstNamesRecovered {
         complete: bool,
     },
+    /// Internal: the one-time replay of the phone's stars, for those made
+    /// before ZapFast followed them, finished.
+    StarsRecovered {
+        complete: bool,
+    },
     /// Internal: a favorite from the phone finished downloading.
     FavoriteFetched {
         hash: String,
@@ -591,6 +600,36 @@ pub enum Command {
         request: u64,
         result: Result<CreatedGroup, crate::new_group::CreateFailure>,
         picture: Option<std::path::PathBuf>,
+    },
+    /// Asks for a group's invite link, answered by `Event::GroupInviteLink`;
+    /// `reset` revokes the old link first, for admins.
+    GroupInviteLink {
+        chat: ChatId,
+        reset: bool,
+    },
+    /// Adds people to a group, answered by `Event::GroupMembersAdded`.
+    /// `members` are canonical chat ids.
+    AddGroupMembers {
+        chat: ChatId,
+        members: Vec<ChatId>,
+    },
+    /// Changes one of a group's permissions, for its admins: `members`
+    /// true lets every member (for approval, turns it on).
+    SetGroupPermission {
+        chat: ChatId,
+        permission: crate::group_admin::Permission,
+        members: bool,
+    },
+    /// Makes a member an admin, dismisses one, or removes them.
+    ChangeGroupMember {
+        chat: ChatId,
+        member: ChatId,
+        change: crate::group_admin::MemberChange,
+    },
+    /// Internal: WhatsApp answered one of the group management commands.
+    GroupManaged {
+        chat: ChatId,
+        answer: GroupAnswer,
     },
     /// Internal: WhatsApp answered a change to a group's name or photo.
     GroupEdited {
@@ -938,6 +977,12 @@ pub enum Command {
         /// The chat's rename generation when this metadata was asked for. A
         /// snapshot older than a rename made here cannot restore the old name.
         subject_generation: u64,
+        /// The group's permissions and admins.
+        settings: crate::model::GroupSettings,
+        /// The chat's management generation when this metadata was asked
+        /// for. A snapshot older than a permission or member change made here
+        /// cannot undo it.
+        settings_generation: u64,
     },
     /// Internal pairing-code result.
     PairCode {
@@ -1265,6 +1310,31 @@ pub enum Event {
     },
     /// A picture picked for a group being created, staged as a JPEG.
     NewGroupPicture(Result<std::path::PathBuf, String>),
+    /// A group's invite link, or why it could not be had.
+    GroupInviteLink {
+        chat: ChatId,
+        reset: bool,
+        result: Result<crate::group_admin::InviteLink, crate::group_admin::Failure>,
+    },
+    /// `Command::AddGroupMembers` finished.
+    GroupMembersAdded {
+        chat: ChatId,
+        result: Result<crate::group_admin::Added, crate::group_admin::Failure>,
+    },
+    /// `Command::SetGroupPermission` finished; on success the chat is
+    /// already updated.
+    GroupPermissionSaved {
+        chat: ChatId,
+        permission: crate::group_admin::Permission,
+        result: Result<(), crate::group_admin::Failure>,
+    },
+    /// `Command::ChangeGroupMember` finished.
+    GroupMemberChanged {
+        chat: ChatId,
+        member: ChatId,
+        change: crate::group_admin::MemberChange,
+        result: Result<(), crate::group_admin::Failure>,
+    },
     /// `Command::CreateGroup` finished: the group is filed and can open.
     GroupCreated {
         request: u64,
@@ -1343,6 +1413,36 @@ pub enum GroupEdit {
     Picture { removed: bool },
 }
 
+/// WhatsApp's answer to a group management command, read on the runtime and
+/// filed by the worker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GroupAnswer {
+    Link {
+        reset: bool,
+        result: Result<crate::group_admin::InviteLink, crate::group_admin::Failure>,
+    },
+    Added(Result<Vec<MemberAnswer>, crate::group_admin::Failure>),
+    Permission {
+        permission: crate::group_admin::Permission,
+        members: bool,
+        result: Result<(), crate::group_admin::Failure>,
+    },
+    Member {
+        member: ChatId,
+        change: crate::group_admin::MemberChange,
+        result: Result<Vec<MemberAnswer>, crate::group_admin::Failure>,
+    },
+}
+
+/// What WhatsApp said about one person in a member change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberAnswer {
+    /// The person's canonical chat id.
+    pub id: ChatId,
+    /// WhatsApp's error code for them, such as "403"; `None` when accepted.
+    pub error: Option<String>,
+}
+
 /// A group WhatsApp created for `Command::CreateGroup`, read on the runtime
 /// and filed by the worker.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1356,6 +1456,8 @@ pub struct CreatedGroup {
     pub admin: bool,
     pub info_locked: bool,
     pub read_only: bool,
+    /// Its permissions and admins.
+    pub settings: crate::model::GroupSettings,
     /// When WhatsApp made it, in Unix seconds.
     pub created_at: i64,
     /// The people picked whom WhatsApp did not add. Empty when the members
@@ -1383,6 +1485,8 @@ pub enum Refusal {
     /// original protobuf is missing, unreadable, or deleted. Sending anyway
     /// would deliver the reply without its quote.
     QuoteUnavailable,
+    /// View-once sends must be one photo, not a document or batch.
+    UnsupportedViewOnce,
 }
 
 /// The content of a refused send.
@@ -1399,12 +1503,14 @@ pub enum Unsent {
     Files {
         paths: Vec<PathBuf>,
         documents: bool,
+        view_once: bool,
         caption: Option<String>,
     },
     Image {
         width: u32,
         height: u32,
         rgba: Vec<u8>,
+        view_once: bool,
         caption: Option<String>,
     },
     Sticker,

@@ -233,7 +233,7 @@ fn run() -> eframe::Result<()> {
         && target.is_none()
         && invite.is_none()
     {
-        eprintln!("ZapFast cannot read a phone number from {argument}");
+        eprintln!("ZapFast cannot read a phone number or group invite link from {argument}");
         std::process::exit(2);
     }
     let waker = backend::Waker::default();
@@ -436,10 +436,13 @@ fn run() -> eframe::Result<()> {
             // with. Demo runs keep their fixed screenshot size.
             // Decided as each window is made: it cannot become transparent
             // later.
-            let transparent =
-                zapfast::backdrop::transparent_window(lease.peek(|app: &app::App| {
-                    app.settings.theme == zapfast::settings::ThemeChoice::Messages
-                }));
+            let transparent = lease.peek(|app: &app::App| {
+                zapfast::backdrop::transparent_window(
+                    app.settings.theme == zapfast::settings::ThemeChoice::Messages,
+                    app.palette.window.a() < 255,
+                )
+            });
+            zapfast::backdrop::set_window_transparent(transparent);
             let geometry = if demo_persistence.is_some() {
                 fastframe_shell::window::Geometry::default()
             } else {
@@ -722,7 +725,7 @@ impl eframe::App for Shell {
         if zapfast::backdrop::active() {
             [0.0; 4]
         } else {
-            self.app.palette.window.to_normalized_gamma_f32()
+            zapfast::backdrop::clear_color(self.app.palette.window).to_normalized_gamma_f32()
         }
     }
 
@@ -884,6 +887,25 @@ mod target_cli_tests {
             let request = zapfast::target::parse(cli.target.as_deref().unwrap()).unwrap();
             assert_eq!(request.chat, "20123456789@s.whatsapp.net", "{argument}");
             assert_eq!(request.text, None, "{argument}");
+        }
+    }
+
+    #[test]
+    fn an_invite_argument_is_recognised() {
+        for argument in [
+            "https://chat.whatsapp.com/KqTP1zA4tFJLolS2usUzpA",
+            "chat.whatsapp.com/KqTP1zA4tFJLolS2usUzpA",
+            "whatsapp://chat/?code=KqTP1zA4tFJLolS2usUzpA",
+            "whatsapp://chat?code=KqTP1zA4tFJLolS2usUzpA",
+        ] {
+            let cli = Cli::try_parse_from(["zapfast", argument]).unwrap();
+            assert_eq!(
+                cli.target
+                    .as_deref()
+                    .and_then(zapfast::safety::group_invite_code),
+                Some("KqTP1zA4tFJLolS2usUzpA".into()),
+                "{argument}"
+            );
         }
     }
 

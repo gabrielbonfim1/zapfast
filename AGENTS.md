@@ -9,6 +9,9 @@ protocol. These notes are for coding agents and new contributors.
 - Keep it a small native client. No browser engine, no telemetry, no
   hosted backend, no ZapFast-operated account system. Features never send
   message content to a third party.
+- WhatsApp only. ZapFast is a client for WhatsApp accounts and will not
+  speak other networks or protocols (Matrix, Signal, Telegram, IRC, XMPP)
+  or bridge to them.
 - No automation, ever. ZapFast is for a person reading and writing their
   own chats by hand. It will not have bots, an MCP server, or any API,
   command-line, plugin or scripting interface that reads, exports or sends
@@ -34,6 +37,16 @@ protocol. These notes are for coding agents and new contributors.
 - The protocol comes from whatsapp-rust. Do not reimplement pieces of it
   here, and do not advertise a capability merely because a protobuf field
   for it exists.
+- Nothing ships for one platform only. A feature or theme works on Linux,
+  Windows and macOS, through each platform's own mechanism where they differ
+  and a sensible fallback where one lacks it.
+- Fewer settings. Prefer a good default to a new setting, and never add a
+  setting per preference; a change that needs a new setting needs the
+  maintainer's approval first.
+- Pull requests leave the translation template and catalogs
+  (`assets/i18n/`) alone unless the change is a translation itself: the
+  maintainer regenerates them on `main`, and regenerated catalogs bury the
+  real change and conflict with every other pull request.
 - Do not broaden a task into adjacent features or a general refactor.
   Preserve existing user behaviour unless the task changes it.
 - Current limitations are not product exclusions. Before marking a report
@@ -203,9 +216,12 @@ protocol. These notes are for coding agents and new contributors.
   call per account; the window (`app/calls.rs`) holds one call across all
   accounts with its `AccountId`, routes call actions to that account's
   backend, and declines another account's offer while one is up.
-  Group calls are not available yet: `calls::GROUP_CALLS_ENABLED` is
-  `false` (a real test carried no media either way), and everything below
-  about them is the code behind that switch, kept compiling and tested
+  Group calls are experimental: `calls::GROUP_CALLS_ENABLED` is `true` since
+  0.20. A three-person test carried audio every way and video both ways, but
+  our video froze every few seconds, since the library sends video FEC in
+  1:1 calls only (a guessed hop-by-hop group FEC, whatsapp-rust branch
+  `voip-group-video-fec`, made the SFU drop our media altogether). The switch
+  stays, kept compiling and tested both ways
   (`calls::override_group_calls` sets it per test thread). Read it through
   `calls::group_calls_enabled()`. While it is off a group has no call
   button and no call back (`ui::conversation::callable`, `call_menu`, the
@@ -444,6 +460,29 @@ protocol. These notes are for coding agents and new contributors.
   people picked but missing are reported by name. `group_created` files the
   chat named, with its members and our admin rights, before
   `Event::GroupCreated` opens it.
+- Group management lives in the info panel (`src/group_admin.rs`, the worker's
+  `backend/worker/group_admin.rs`). The metadata's permissions and admins are
+  filed as `chats.group_settings` (JSON, NULL until known; `Chat::group_settings`),
+  read by `settings_of`: only an explicit `all_member_add`/`all_member_link`
+  lets members add people or see the link, WhatsApp's default being admins
+  only. `Chat::can_add_members`, `can_share_invite_link` and `can_manage_group`
+  gate the panel's Add members, Invite via link, Group permissions (an
+  `InfoView::Permissions` page: `set_locked`, `set_announce`,
+  `set_member_add_mode`, `set_membership_approval`) and each member's menu
+  (`promote_participants`, `demote_participants`, `remove_participants`);
+  the worker checks the same rights again. Add members is New group's
+  `Draft` made with `Draft::adding` (the choosing step alone, without the
+  group's members), sent with `add_participants`, whose per-person error
+  codes name who was refused and why (403 privacy, 408 recently left; 409,
+  already in, counts as added). Each answer returns as
+  `Command::GroupManaged`; `group_managed` files only what WhatsApp accepted
+  and bumps `settings_generation`, so metadata asked for earlier (the library
+  joins a query in flight) cannot undo it, and a refusal re-asks the
+  metadata. The invite link (`groups().get_invite_link`, `reset` revokes it)
+  is a secret: `group_admin::InviteLink` hides it from `Debug`, it is never
+  logged or stored, and the window keeps it only while the panel shows its
+  group (`App::info_invite`). The library has no simple way to send an
+  invite message, so people WhatsApp refuses are named and pointed to the link.
 - Mentioning everyone uses the visible body token `@all` and bit 1 of
   `ContextInfo.non_jid_mentions` (`src/mentions.rs`). Localized words
   (`@todos` in Portuguese, and the one-word alias of each other language)
@@ -626,6 +665,11 @@ protocol. These notes are for coding agents and new contributors.
   History `MESSAGE_EDIT` entries carry full snapshots, unlike live edit events:
   keep their envelope timestamp/order and normalize the body and target id.
   Do not require a separate original or create a bubble under the edit id.
+  An edit made before linking can arrive as a `secretEncryptedMessage`
+  MESSAGE_EDIT: `parse_conversation` files it as a `SealedEdit` under the
+  original's id, and the worker opens it with the original's secret (the
+  chunk's, the archive's, or the entry's own) before filing the snapshot;
+  one it cannot open is not filed.
   Count-only diagnostics can distinguish malformed snapshots from storage failures.
 - Scrolling comes from fastframe-scroll: `App::scrolling.apply` runs first
   in each unlocked frame and sets the wheel step (120 points a notch), and on

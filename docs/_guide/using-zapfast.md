@@ -8,6 +8,10 @@ nav_order: 3
 
 ## Writing
 
+Undo and redo in the message field apply to its current chat and account.
+Switching chats or accounts, closing a chat, or unlinking clears the editor's
+undo history. Saved drafts remain available when you return to their chat.
+
 Enter sends and Shift+Enter adds a line. Turn off **Enter sends** in Settings
 to make Enter add a line and send with Ctrl+Enter (Command+Enter on macOS).
 `*bold*`, `_italic_`, `~strike~`, and ```` ```monospace ```` ```` format
@@ -51,6 +55,9 @@ several, **Review recipients** lists them for you to confirm, and **Back**
 returns to the picker without losing the selection. If a destination becomes
 locked or read-only, ZapFast returns to selection instead of sending a partial
 batch. Switching accounts discards the open forwarding selection.
+In a large window the dialog takes more of the window, so more recipients fit
+at once; it still stays inside a narrow or short one, and searching or changing
+the selection does not collapse the list.
 
 Right-click a group message and choose **Reply privately** to open a direct
 conversation with its sender while quoting the group message. The quote
@@ -84,6 +91,11 @@ would be on its own.
 
 **Delete chat** and **Clear chat** already sync in 0.19.0, as described under
 [Chats](#chats).
+
+**Development builds** place a message you send at the time WhatsApp's
+server acknowledged it, so a reply no longer sorts above it when this
+computer's clock runs ahead. Until the server answers, and for a poll, the
+message keeps this computer's time.
 
 **Development builds** preserve edited replies and the phone's order for
 messages sent within the same second when loading history. If an earlier
@@ -121,7 +133,8 @@ by sender, time, and a short summary.
 **Development builds** can star messages. Right-click a message and choose
 **Star**; once WhatsApp confirms it, a small star shows beside the message's
 time. Stars made on your phone or another linked device show up here too, and
-the other way round. The star near the foot of the rail on the left of the chat list, above
+the other way round. Stars made before your copy of ZapFast followed them are
+read from the phone once, the next time it connects. The star near the foot of the rail on the left of the chat list, above
 **Archived** and **Settings**, opens
 **Starred**, which lists every starred message, newest star first, with its
 chat's name and when it was starred. Text shows as written; a photo, video,
@@ -216,6 +229,16 @@ caption. To reply with an attachment, start a reply and then attach the file.
 When sending several files, the caption and reply quote belong to the first
 one. Press Escape or click a file's close button to remove it.
 
+With exactly one supported photo (JPEG, PNG, or WebP) staged, select
+the **View once** icon (a 1 inside a dashed circle) beside Send. It lights up
+when enabled, and sends the photo as a WhatsApp view-once message. You can still
+add a caption. The sent message appears as a view-once placeholder in ZapFast;
+the recipient opens it on their phone. This option is not available for
+documents or batches of attachments.
+If you add more attachments, or a refused send returns to a draft with other
+attachments, remove the extras or turn off **View once** before sending.
+ZapFast keeps this choice until you switch it off, send, or clear the draft.
+
 Pictures sent this way become photos, which WhatsApp shows inline but
 compresses: transparency and the file's metadata are lost. To send a picture as
 it is, choose **Send as document** in the plus menu beside the message field
@@ -223,10 +246,22 @@ instead. The files you select there go as documents with their own name and
 bytes, pictures included, and show as files above the composer until you send
 them.
 
+Videos go as playable video messages only when they are MP4. WhatsApp does
+not deliver a video message in another format, and ZapFast does not convert
+videos, so a QuickTime `.mov`, WebM, MKV, or AVI file goes as a document
+instead and arrives as the original file. Audio works the same way: MP3, M4A,
+AAC, AMR, and OGG go as audio messages, other formats as documents.
+
 Staged attachments stay with their chat, along with their caption and reply,
 when you switch chats or accounts, and come back when you return. Unlike text
 drafts, they are kept only while ZapFast runs. A refused attachment send goes
 back to the chat it was meant for.
+
+Pinned chats stay first. Other chats with unsent text or attachments appear
+below the pins once you leave their conversation. Opening a draft, typing,
+or clearing it keeps its draft priority until you leave again. Within each
+group, chats keep their usual latest-message order. The Favorites chip keeps
+the phone's favorites order below pins.
 
 Click a picture above the composer to crop it before you send it. The picture
 opens over the window with the region to keep marked, and you can drag that
@@ -429,7 +464,12 @@ the speed of the other chats again. When a voice message ends, playback carries 
 voice messages right after it that you have not heard yet, as on the phone;
 any other message ends the run. The speaker's pitch stays the same at every
 speed. The first play sends
-a played receipt. When the composer is empty, the send button becomes a
+a played receipt, so your phone marks the voice message as heard. With read
+receipts off in your account privacy, the receipt goes only to your own
+devices and the sender is not told. With **Send read receipts** off in
+ZapFast's settings, no played receipt is sent. A voice message you have not
+heard yet shows a dot beside its length; it goes away once you play it here or
+on another device. When the composer is empty, the send button becomes a
 microphone. The light beside the time turns red, and the time starts, once the
 microphone delivers sound: one the system had put to sleep can take a moment to
 wake, and anything said before then is not recorded. Press Enter or the send
@@ -504,20 +544,15 @@ take out and your voice goes out as it is; there is nothing to switch.
 
 ### Group calls
 
-ZapFast can't take part in group calls yet. A group's header has no call
-buttons, and a group call is started and answered on your phone.
-
-When someone calls one of your groups, ZapFast does not ring or show the call
-screen. It shows a notification, and a notice in the window while it is open,
-saying who is calling which group: "Jonas is calling Rust Berlin. ZapFast
-can't join group calls yet: answer on your phone." ZapFast sends WhatsApp
-nothing about the call, so your phone keeps ringing and you can answer there.
-A muted, archived or locked group's call stays as quiet as its messages. The
-call is still filed in the group's history when it ends.
-
-A call link in a message (`call.whatsapp.com/voice/…` or `/video/…`) is not
-joined here either: clicking it says ZapFast can't join group calls yet, so
-open the link on your phone.
+Group calls are experimental. A group's header has the same call buttons as
+a person's, a call to one of your groups rings here as any call does, and a
+call link in a message (`call.whatsapp.com/voice/…` or `/video/…`) joins that
+call. Everyone hears everyone, and each person's video gets a tile of its own.
+In testing your own video, as the others see it, still stopped for a moment
+every few seconds: one-to-one calls rebuild lost video from repair packets,
+and group calls do not yet. If WhatsApp has not turned on group calls from a
+computer for your account, starting one says so: ask someone in the group to
+call it, and answer here.
 
 One call at a time: a call to another of your numbers while one is up is
 declined there. With several numbers linked, a call to a number that is not on
@@ -586,8 +621,8 @@ characters), optionally choose **Add group photo** (cropped to a centred
 square, as the group details' photo is), and choose **Create**. You are the
 group's admin, and the new group opens straight away. Some people's privacy
 settings only let certain contacts add them to groups: when WhatsApp does not
-add someone, ZapFast names them after the group is created, and you can invite
-them from your phone. **Back** steps back, unchecking everyone returns to the
+add someone, ZapFast names them after the group is created, and you can send
+them the group's invite link from its details. **Back** steps back, unchecking everyone returns to the
 contact list, and Escape closes the dialog.
 
 The search bar finds chats by name, number, or latest message; searches all
@@ -597,8 +632,9 @@ Click a message result to jump to it, or a contact to start a chat. Use
 `Alt+↑/↓`, or `Ctrl+Shift+[` and `Ctrl+Shift+]` as in WhatsApp, to switch chats
 without leaving the composer (Command instead of Ctrl on macOS), and
 `Ctrl+1` through `Ctrl+9` to open the chat at that position in the list. Within an open
-chat, `PgUp`/`PgDn` scroll by about a page, and `Home`/`End` jump to the top or
-the newest message (when the input is empty).
+chat, `PgUp`/`PgDn` scroll by about a page, and `Home`/`End` (or `Ctrl+End`)
+jump to the top or the newest message when the input is empty. With text in
+the input, they move the text cursor as in any editor.
 
 With a mouse that has them, the **Back** and **Forward** side buttons step
 through the places you have visited, as in a browser: between chats, and
@@ -636,24 +672,32 @@ has. Click the active chip again, or **All**, to see every chat. The
 filter applies only to this list: search and the archive still show everything.
 ZapFast remembers the chip or label each account last showed and comes back
 to it at the next start.
+As on the phone, the list leaves out people you have never exchanged a
+message or call with, though your phone sends their chats along with the
+others. One stays listed while it is pinned, a favorite, labeled, unread,
+locked, open, or holds an unsent draft. Search still finds them, and the
+first message or call brings one into the list.
 When the chips do not fit the chat list's width, the row fades at its edge:
 scroll it with the mouse wheel or a touchpad, or drag the scroll bar that
 appears while the pointer is over the row. The label row scrolls the same way.
 
 Right-click a chat to pin, favorite, archive, mark as unread, or mute it for
 eight hours, one week, or indefinitely. These changes also apply on your
-phone. **Delete chat** in the same menu and **Clear chat** in the chat
-header's menu need a connection: the phone acts first, and the chat leaves
-this computer once it confirms. Groups and channels can be left from the same
-menu, keeping their history here. `Ctrl+E` (Command+E on macOS) archives the
-open chat, or unarchives it from **Archived**, as in WhatsApp.
+phone. **Clear chat** is in this menu and in the chat header's menu; it needs a
+connection and asks first. It clears messages on this computer and your phone,
+removes cached media from this computer, and keeps the chat. Media saved in
+your configured download folder stays there. **Delete chat** in
+the same menu also needs a connection and confirmation. Groups and channels
+can be left from the same menu, keeping their history here. `Ctrl+E`
+(Command+E on macOS) archives the open chat, or unarchives it from
+**Archived**, as in WhatsApp.
 
-Archived chats stay archived when new messages arrive. **Development builds**
-add **Keep chats archived** in Settings: turn it off to have a new message,
-received or sent, bring the chat back to the list. This setting applies to all
-accounts here. ZapFast does not read the phone's own setting yet, so set it
-here to match. Messages older than the archiving, duplicate deliveries, and
-history replay leave archived chats in place.
+ZapFast follows your phone's **Keep chats archived** (in WhatsApp's chat
+settings): with it off, a new message, received or sent, brings an archived
+chat back to the list, as on the phone. Until a phone has sent its setting,
+**Keep chats archived** in ZapFast's Settings decides for that account.
+Messages older than the archiving, duplicate deliveries, and history replay
+leave archived chats in place.
 
 The search icon in a chat's header (`Ctrl+F`) opens a pane listing that
 chat's matches, newest first. Its calendar narrows them to one day.
@@ -664,6 +708,32 @@ chat's actions. When WhatsApp lets you edit a group's info, rename it with the
 pencil beside its name and click its photo to change it. Clicking a
 `chat.whatsapp.com` invite link shows the group and joins it without leaving
 ZapFast.
+
+The details of a group you run (as one of its admins) also let you manage it,
+as WhatsApp's own apps do:
+
+- **Invite via link** shows the group's `https://chat.whatsapp.com/` link.
+  **Copy link** puts it on the clipboard to paste wherever you like, for
+  example to gather friends for a call. **Reset link** asks first, then turns
+  the old link off and makes a new one: anyone holding the old link can no
+  longer join with it. Anyone with the link can join, so share it only with
+  people you would add yourself.
+- **Add members** opens the same list as **New group**, without the people
+  already in it: check the ones to add and choose **Add**. When someone's
+  privacy settings do not let you add them, or they left the group recently,
+  ZapFast names them; send them the invite link instead.
+- **Group permissions** has WhatsApp's switches: whether members (not only
+  admins) may edit the group's settings, send messages and add other members,
+  and whether admins approve new members before they join. A switch moves
+  once WhatsApp accepts the change. Requests to join wait on your phone.
+- Each member's row has a **…** menu (also on right-click): **Make group
+  admin**, **Dismiss as admin**, and **Remove from group**, which asks first.
+  Admins are tagged **Group admin**. The group's creator cannot be dismissed
+  or removed.
+
+Members who are not admins see **Add members** and **Invite via link** only
+when the group lets every member add people or share its link. ZapFast keeps
+the link only while the details are open, never on disk.
 
 **Media, links and docs** in the panel lists the photos and videos, the
 documents, and the links shared in the chat, newest first: click a photo or a
@@ -731,7 +801,6 @@ local code to open
 them; the first time, ZapFast offers to set one up. The code is separate from
 your phone's and adds no encryption beyond the encrypted message archive.
 Leaving the tab, changing the code, or closing the window hides them again.
-Locked chats are read-only in ZapFast for now.
 
 ## Labels
 
@@ -792,6 +861,8 @@ Windows, notifications show the chat picture. On Linux, Windows, and macOS, a
 click on a notification opens the chat at the message it announced. This holds for the 32 most recent tracked notifications on all three platforms;
 older notifications remain in system history without a message click listener.
 Reading a chat removes its tracked notifications, including Windows toasts.
+On Windows, while every display is off, ZapFast leaves new-message notifications
+to the phone instead of queuing desktop banners to appear when the display turns on.
 Fastframe provides the same delivery and cancellation interface on each platform. macOS
 asks once for permission to show notifications. On Linux, a notification that arrives while the
 window is open behind others also highlights ZapFast in the taskbar until you
@@ -813,3 +884,24 @@ shortcuts.
 ZapFast announces confirmations, errors, connection changes and history loading
 through the screen reader without moving focus. While the app is locked, only
 connection and history changes are announced.
+
+Each message, or album, is exposed as one item that reads its sender, text,
+time and delivery status, then any quote, forward, edit and reactions; the
+first message of a day starts with the day and the first unread one with
+Unread.
+
+The messages form one list, named for the chat, such as "Messages with Ada" or
+"Messages in Rust Berlin", and each message, or album, reports its position in
+it. The list is a single Tab stop: Alt+2 (Control+2 on macOS) also moves there.
+In the list, Up and Down move one item, Home and End go to the oldest loaded
+and the newest message, and PgUp and PgDn move about a screen; Home on the
+oldest loaded message loads older history. The current message stays put when
+new messages arrive, and follows when ZapFast itself takes you to a message:
+the next voice message playing on, a quoted message, or a search result. After
+keyboard navigation it is outlined like any other focused control.
+
+In the chat view, Tab moves through the message input and its buttons, phone
+numbers in messages, chat search, the chat info panel, the message list, the
+rail, the chat list's header, search and the chat filters, then returns to the
+input. Shift+Tab goes back; hidden controls are skipped. Single messages,
+reactions and chat rows are not stops; Alt+Up/Down switches conversations.

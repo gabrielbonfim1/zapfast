@@ -13,6 +13,7 @@ pub mod image_preview;
 pub mod info;
 pub mod keys;
 pub mod labels;
+pub mod list_nav;
 pub mod locations;
 pub mod lock;
 pub mod login;
@@ -38,6 +39,8 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = &ctx;
     track_keyboard_focus(ctx);
     info::release_thumbnails(app, ctx);
+    // The message list sets it again when it is drawn with focus.
+    app.messages_focused = false;
     // Locked, nothing else is drawn: no chat list, no messages, no dialogs,
     // no toasts, and no shortcut reaches them.
     if app.app_lock.is_locked() {
@@ -385,26 +388,46 @@ pub fn focus_ring_id() -> egui::Id {
 }
 
 /// Tab shows where focus is; a pointer press hides it again. Widgets scroll
-/// themselves into view through `theme::reveal_focus`.
+/// themselves into view through `theme::reveal_focus`. In a list that rings
+/// its current item (`list_nav::outline_only`), the keys that move the item
+/// count as keyboard navigation too: the reader may have reached the list by
+/// a shortcut or a screen reader rather than Tab.
 fn track_keyboard_focus(ctx: &egui::Context) {
-    let (tab, pressed) = ctx.input(|input| {
-        let tab = input.events.iter().any(|event| {
+    // Checked before the list registers again this frame, so last frame's
+    // registration counts.
+    let in_list = ctx
+        .memory(|memory| memory.focused())
+        .is_some_and(|id| list_nav::was_outline_only(ctx, id));
+    let (navigated, pressed) = ctx.input(|input| {
+        let navigated = input.events.iter().any(|event| {
             matches!(
                 event,
                 egui::Event::Key {
-                    key: egui::Key::Tab,
+                    key,
                     pressed: true,
                     ..
-                }
+                } if *key == egui::Key::Tab
+                    || (in_list
+                        && matches!(
+                            key,
+                            egui::Key::ArrowUp
+                                | egui::Key::ArrowDown
+                                | egui::Key::ArrowLeft
+                                | egui::Key::ArrowRight
+                                | egui::Key::Home
+                                | egui::Key::End
+                                | egui::Key::PageUp
+                                | egui::Key::PageDown
+                        ))
             )
         });
-        (tab, input.pointer.any_pressed())
+        (navigated, input.pointer.any_pressed())
     });
     let mut keyboard = ctx.data(|data| {
         data.get_temp::<bool>(theme::keyboard_focus_id())
             .unwrap_or(false)
     });
-    if tab {
+    if navigated {
         keyboard = true;
     } else if pressed {
         keyboard = false;
@@ -432,6 +455,11 @@ fn focus_ring(app: &App, ctx: &egui::Context) {
     let custom = ctx
         .data(|data| data.get_temp::<theme::FocusOutline>(response.id.with("focus-outline")))
         .filter(|outline| outline.frame == ctx.cumulative_frame_nr());
+    // A list rings its current item only. With that item not drawn this
+    // frame there is nothing to ring, and never the whole list.
+    if custom.is_none() && list_nav::is_outline_only(ctx, response.id) {
+        return;
+    }
     if !keyboard && !ctx.text_edit_focused() {
         return;
     }
@@ -489,12 +517,9 @@ fn drop_target(app: &mut App, ctx: &egui::Context) {
                 .show(ui, |ui| {
                     ui.vertical_centered(|ui| {
                         theme::icon(ui, Icon::Paperclip, 28.0, palette.accent);
-                        theme::text(
-                            ui,
-                            format!("Drop to send to {name}"),
-                            theme::semibold(15.0),
-                            palette.text,
-                        );
+                        let drop_text = crate::i18n::gettext(app.locale, "Drop to send to {name}")
+                            .replace("{name}", &name);
+                        theme::text(ui, drop_text, theme::semibold(15.0), palette.text);
                     });
                 });
         });
@@ -512,8 +537,11 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
         LinkStatus::Connected if app.syncing => (
             Icon::Refresh,
             match app.sync_percent {
-                Some(percent) => format!("Loading chat history… {percent}%"),
-                None => "Loading chat history…".to_owned(),
+                Some(percent) => {
+                    crate::i18n::gettext(app.locale, "Loading chat history… {percent}%")
+                        .replace("{percent}", &percent.to_string())
+                }
+                None => crate::i18n::gettext(app.locale, "Loading chat history…").into_owned(),
             },
             palette.accent,
             false,
@@ -523,7 +551,8 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
             let update = update.as_ref().expect("checked above");
             (
                 Icon::Info,
-                format!("ZapFast {} is available", update.version),
+                crate::i18n::gettext(app.locale, "ZapFast {version} is available")
+                    .replace("{version}", &update.version),
                 palette.accent,
                 false,
                 Some(update.url.clone()),
@@ -532,14 +561,15 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
         LinkStatus::Connected => return,
         LinkStatus::Starting | LinkStatus::Connecting => (
             Icon::Refresh,
-            "Connecting to WhatsApp…".to_owned(),
+            crate::i18n::gettext(app.locale, "Connecting to WhatsApp…").into_owned(),
             palette.secondary,
             false,
             None,
         ),
         LinkStatus::Disconnected { reason } => (
             Icon::WifiOff,
-            format!("Offline ({reason}). Reconnecting…"),
+            crate::i18n::gettext(app.locale, "Offline ({reason}). Reconnecting…")
+                .replace("{reason}", reason),
             palette.warning,
             true,
             None,
@@ -553,7 +583,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
         ),
         LinkStatus::Unlinked { .. } | LinkStatus::LoggedOut => (
             Icon::Smartphone,
-            "Not linked to a phone".to_owned(),
+            crate::i18n::gettext(app.locale, "Not linked to a phone").into_owned(),
             palette.warning,
             false,
             None,
@@ -587,7 +617,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
                                 ui,
                                 &palette,
                                 Some(Icon::ExternalLink),
-                                "Update",
+                                &crate::i18n::gettext(app.locale, "Update"),
                                 false,
                             )
                             .clicked()
@@ -598,7 +628,7 @@ fn banner(app: &mut App, ui: &mut egui::Ui) {
                             ui,
                             &palette,
                             Some(Icon::Refresh),
-                            "Retry",
+                            &crate::i18n::gettext(app.locale, "Retry"),
                             false,
                         )
                         .clicked()
@@ -713,7 +743,7 @@ fn toasts(app: &mut App, ctx: &egui::Context) {
                                             14.0,
                                             palette.secondary,
                                             palette.text,
-                                            "Dismiss",
+                                            &crate::i18n::gettext(app.locale, "Dismiss"),
                                         );
                                         // Store the rect for interaction tests.
                                         ui.ctx().data_mut(|data| {
@@ -728,7 +758,7 @@ fn toasts(app: &mut App, ctx: &egui::Context) {
                                             14.0,
                                             palette.secondary,
                                             palette.text,
-                                            "Copy this message",
+                                            &crate::i18n::gettext(app.locale, "Copy this message"),
                                         )
                                         .clicked()
                                         {
@@ -1474,10 +1504,10 @@ mod idle_tests {
         .0;
         app.link = LinkStatus::Connected;
         for i in 0..60 {
-            app.chats.push(crate::model::Chat::new(
-                format!("{i}@s.whatsapp.net"),
-                format!("Chat {i}"),
-            ));
+            app.chats.push(crate::model::Chat {
+                last_activity: 1,
+                ..crate::model::Chat::new(format!("{i}@s.whatsapp.net"), format!("Chat {i}"))
+            });
         }
         let ctx = egui::Context::default();
         theme::install(&ctx);
