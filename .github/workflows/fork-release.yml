@@ -1,9 +1,10 @@
 name: Fork release
 
-# Builds every push to main of this fork and publishes it as a GitHub
-# release. The upstream release workflow (release.yml) stays as it is: it
-# runs on v* tags and needs the maintainer's signing secrets, so the tags
-# made here start with "fork-" and never match it.
+# Builds every push to main of this fork for macOS on Apple silicon and
+# publishes it as a GitHub release. The upstream release workflow
+# (release.yml) stays as it is: it runs on v* tags and needs the
+# maintainer's signing secrets, so the tags made here start with "fork-"
+# and never match it.
 
 on:
   push:
@@ -43,104 +44,35 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=fork-v$version-$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
 
-  build:
-    name: build (${{ matrix.target }})
-    needs: version
-    runs-on: ${{ matrix.os }}
-    # Debian 12, as in release.yml: the binary runs on its glibc (2.36) or
-    # newer, and its libpipewire is new enough for the audio output.
-    container: ${{ matrix.container }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            container: debian:12
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-    steps:
-      - name: GUI build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            ca-certificates curl git build-essential pkg-config \
-            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev \
-            libpipewire-0.3-dev clang libclang-dev cmake perl
-      - uses: actions/checkout@v7
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
-      # rust-toolchain.toml pins the compiler; add the target to that one.
-      - run: rustup target add ${{ matrix.target }}
-      - run: cargo build --locked --release --target ${{ matrix.target }}
-
-      - name: Package
-        shell: bash
-        run: |
-          name="zapfast-${{ needs.version.outputs.tag }}-${{ matrix.target }}"
-          mkdir -p "dist/$name"
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            cp "target/${{ matrix.target }}/release/zapfast.exe" "dist/$name/"
-          else
-            cp "target/${{ matrix.target }}/release/zapfast" "dist/$name/"
-            cp --parents packaging/applications/zapfast.desktop packaging/icons/zapfast.svg "dist/$name/"
-          fi
-          cp README.md LICENSE THIRD-PARTY-NOTICES.md packaging/zapfast-portable.txt "dist/$name/"
-          cd dist
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            7z a "$name.zip" "$name"
-          else
-            tar czf "$name.tar.gz" "$name"
-          fi
-      - uses: actions/upload-artifact@v7
-        with:
-          name: ${{ matrix.target }}
-          path: |
-            dist/*.tar.gz
-            dist/*.zip
-          if-no-files-found: error
-
   macos:
-    name: macOS universal app
+    name: macOS arm64 app
     needs: version
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
-      - name: Build both architectures
-        run: |
-          cargo build --locked --release --target aarch64-apple-darwin
-          cargo build --locked --release --target x86_64-apple-darwin
-      - name: Universal binary
-        run: |
-          mkdir -p universal
-          lipo -create \
-            target/aarch64-apple-darwin/release/zapfast \
-            target/x86_64-apple-darwin/release/zapfast \
-            -output universal/zapfast
-          rm -rf target
+          targets: aarch64-apple-darwin
+      # rust-toolchain.toml pins the compiler; add the target to that one.
+      - run: rustup target add aarch64-apple-darwin
+      - run: cargo build --locked --release --target aarch64-apple-darwin
       # Ad-hoc signed only (no Apple credentials): the first launch needs
       # right-click > Open, or `xattr -dr com.apple.quarantine ZapFast.app`.
       - name: App bundle
         run: |
-          name="zapfast-${{ needs.version.outputs.tag }}-macos-universal"
+          name="zapfast-${{ needs.version.outputs.tag }}-macos-arm64"
           mkdir -p dist
-          bash packaging/macos/bundle.sh universal/zapfast dist/ZapFast.app "${{ needs.version.outputs.version }}"
+          bash packaging/macos/bundle.sh target/aarch64-apple-darwin/release/zapfast dist/ZapFast.app "${{ needs.version.outputs.version }}"
           ditto -c -k --keepParent dist/ZapFast.app "dist/$name.zip"
       - uses: actions/upload-artifact@v7
         with:
-          name: macos-universal
+          name: macos-arm64
           path: dist/*.zip
           if-no-files-found: error
 
   publish:
     name: GitHub release
-    needs: [version, build, macos]
+    needs: [version, macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
