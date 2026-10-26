@@ -1,0 +1,164 @@
+name: Fork release
+
+# Builds every push to main of this fork and publishes it as a GitHub
+# release. The upstream release workflow (release.yml) stays as it is: it
+# runs on v* tags and needs the maintainer's signing secrets, so the tags
+# made here start with "fork-" and never match it.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push replaces a build still running for an older one.
+concurrency:
+  group: fork-release
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Optional: without the secret the build ships keyless and the GIF
+  # picker asks for a key.
+  ZAPFAST_GIPHY_KEY: ${{ secrets.ZAPFAST_GIPHY_KEY }}
+
+jobs:
+  version:
+    name: release name
+    if: github.repository != 'crmne/zapfast'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      version: ${{ steps.tag.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: tag
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=fork-v$version-$GITHUB_RUN_NUMBER" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: version
+    runs-on: ${{ matrix.os }}
+    # Debian 12, as in release.yml: the binary runs on its glibc (2.36) or
+    # newer, and its libpipewire is new enough for the audio output.
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            container: debian:12
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - name: GUI build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential pkg-config \
+            libxkbcommon-dev libwayland-dev libgl1-mesa-dev libasound2-dev \
+            libpipewire-0.3-dev clang libclang-dev cmake perl
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      # rust-toolchain.toml pins the compiler; add the target to that one.
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --locked --release --target ${{ matrix.target }}
+
+      - name: Package
+        shell: bash
+        run: |
+          name="zapfast-${{ needs.version.outputs.tag }}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            cp "target/${{ matrix.target }}/release/zapfast.exe" "dist/$name/"
+          else
+            cp "target/${{ matrix.target }}/release/zapfast" "dist/$name/"
+            cp --parents packaging/applications/zapfast.desktop packaging/icons/zapfast.svg "dist/$name/"
+          fi
+          cp README.md LICENSE THIRD-PARTY-NOTICES.md packaging/zapfast-portable.txt "dist/$name/"
+          cd dist
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "$name.zip" "$name"
+          else
+            tar czf "$name.tar.gz" "$name"
+          fi
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS universal app
+    needs: version
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - run: rustup target add aarch64-apple-darwin x86_64-apple-darwin
+      - name: Build both architectures
+        run: |
+          cargo build --locked --release --target aarch64-apple-darwin
+          cargo build --locked --release --target x86_64-apple-darwin
+      - name: Universal binary
+        run: |
+          mkdir -p universal
+          lipo -create \
+            target/aarch64-apple-darwin/release/zapfast \
+            target/x86_64-apple-darwin/release/zapfast \
+            -output universal/zapfast
+          rm -rf target
+      # Ad-hoc signed only (no Apple credentials): the first launch needs
+      # right-click > Open, or `xattr -dr com.apple.quarantine ZapFast.app`.
+      - name: App bundle
+        run: |
+          name="zapfast-${{ needs.version.outputs.tag }}-macos-universal"
+          mkdir -p dist
+          bash packaging/macos/bundle.sh universal/zapfast dist/ZapFast.app "${{ needs.version.outputs.version }}"
+          ditto -c -k --keepParent dist/ZapFast.app "dist/$name.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-universal
+          path: dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release
+    needs: [version, build, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > checksums.txt
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          target_commitish: ${{ github.sha }}
+          name: ZapFast ${{ needs.version.outputs.version }} (fork build ${{ github.run_number }})
+          body: |
+            Automatic build of ${{ github.sha }} from this fork's main.
+
+            macOS: the app is not notarized; open it the first time with right-click > Open.
+          files: dist/*
+          make_latest: true
