@@ -80,7 +80,7 @@ struct Cli {
     demo_titlebar: bool,
 
     /// Demo view: `chat`, `phone-menu`, `empty`, `settings`, `login`,
-    /// `pair`, `shortcuts`, `about`, `info`, `mention`, `light`, or a comma-separated
+    /// `pair`, `shortcuts`, `about`, `info`, `mention`, `voice-presence`, `light`, or a comma-separated
     /// mix such as `chat,light`.
     #[cfg(feature = "demo")]
     #[arg(long)]
@@ -438,7 +438,7 @@ fn run() -> eframe::Result<()> {
             // later.
             let transparent = lease.peek(|app: &app::App| {
                 zapfast::backdrop::transparent_window(
-                    app.settings.theme == zapfast::settings::ThemeChoice::Messages,
+                    app.palette.vibrant(),
                     app.palette.window.a() < 255,
                 )
             });
@@ -470,6 +470,12 @@ fn run() -> eframe::Result<()> {
                 Box::new(move |cc| {
                     let mut app = lease.take(&cc.egui_ctx);
                     app.attach(&cc.egui_ctx);
+                    #[cfg(target_os = "linux")]
+                    app.attach_clipboard(
+                        raw_window_handle::HasDisplayHandle::display_handle(cc)
+                            .ok()
+                            .map(|display| display.as_raw()),
+                    );
                     // Registered here rather than in `attach`, which headless
                     // tests call too: they must never start a browser.
                     #[cfg(all(unix, not(target_os = "macos")))]
@@ -822,6 +828,8 @@ impl Shell {
             egui::Popup::open_id(ui.ctx(), zapfast::demo::phone_menu_popup_id());
         }
         app.frame_ui(ui);
+        #[cfg(target_os = "macos")]
+        app.match_window_transparency(ui.ctx(), self.transparent);
         let startups: Vec<_> = app
             .accounts
             .iter_mut()

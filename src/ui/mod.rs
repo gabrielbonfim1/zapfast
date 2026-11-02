@@ -1,8 +1,11 @@
 //! Window layout: panels, overlays, keyboard shortcuts.
 
 pub mod accounts;
+mod attachment_preview;
+mod blocking;
 pub mod call;
 pub mod calls;
+mod chat_export;
 pub mod chats;
 pub mod conversation;
 pub mod dialogs;
@@ -19,12 +22,14 @@ pub mod lock;
 pub mod login;
 pub mod message_info;
 pub mod new_group;
+pub(crate) mod overlay;
 pub mod pane;
 pub mod picker;
 pub mod polls;
 pub mod rail;
 pub mod settings;
 pub mod update;
+mod voice_bar;
 pub mod widgets;
 
 use egui::{Align2, CornerRadius, Frame, Margin, Stroke, vec2};
@@ -39,6 +44,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     let ctx = &ctx;
     track_keyboard_focus(ctx);
     info::release_thumbnails(app, ctx);
+    picker::release_gif_animations(app, ctx);
     // The message list sets it again when it is drawn with focus.
     app.messages_focused = false;
     // Locked, nothing else is drawn: no chat list, no messages, no dialogs,
@@ -72,7 +78,10 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         // The call screen covers the chats.
         && (app.call.is_none() || app.call_surface_hidden)
         // A name typed in the info panel keeps Tab between its fields.
-        && !(app.info_visible() && (app.contact_edit.is_some() || app.group_name_edit.is_some()))
+        && !(app.info_visible()
+            && (app.contact_edit.is_some()
+                || app.group_name_edit.is_some()
+                || app.group_description_edit.is_some()))
         && !egui::Popup::is_any_open(ctx);
     focus::begin(ctx, main_navigation);
     // The open chat's composer records its rect again below, if there is one.
@@ -82,17 +91,13 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
         login::show(app, ui);
         accounts::corner(app, ctx);
         dialogs::show(app, ctx);
+        overlay::finish(ctx);
         update::show(app, ctx);
         toasts(app, ctx);
         focus_ring(app, ctx);
         announce(app, ctx);
         window_chrome(app, ui);
         return;
-    }
-    // Where the headers share the top edge with the window's buttons, the
-    // banner goes under the open chat's header instead.
-    if !theme::chrome_in_headers(ctx) {
-        banner(app, ui);
     }
     let narrow = narrow(ctx);
     let list_only = narrow && list_pane_only(app);
@@ -117,6 +122,7 @@ pub fn show(app: &mut App, ui: &mut egui::Ui) {
     image_preview::show_sticker(app, ctx);
     call::show(app, ctx);
     image_editor::show(app, ctx);
+    overlay::finish(ctx);
     drop_target(app, ctx);
     toasts(app, ctx);
     focus_ring(app, ctx);
@@ -184,7 +190,10 @@ fn main_view(app: &mut App, ui: &mut egui::Ui, list_only: bool) {
                 Page::Chats => conversation::show(app, ui),
                 // The open chat stays beside the call history.
                 Page::Calls if app.current_chat().is_some() => conversation::show(app, ui),
-                Page::Calls => calls::show(app, ui),
+                Page::Calls => {
+                    banner(app, ui);
+                    calls::show(app, ui);
+                }
                 Page::Wallpaper => settings::wallpaper_show(app, ui),
             }
         });
@@ -331,7 +340,23 @@ fn central_frame(app: &App) -> Frame {
         Stroke::NONE
     };
 
-    Frame::new().fill(central_background(app)).stroke(stroke)
+    let background = central_background(app);
+    // An open conversation paints its wallpaper over the whole central
+    // panel. Its opaque background already covers this fill, so drawing it
+    // twice wastes GPU work on every scroll. Keep the fill beneath alpha
+    // themes and attachment review, where it can show through.
+    let conversation_covers_panel = matches!(app.page, Page::Chats)
+        && app.current_chat().is_some()
+        && app.pending.is_empty()
+        && !app.palette.vibrant()
+        && background.a() == 255;
+    Frame::new()
+        .fill(if conversation_covers_panel {
+            egui::Color32::TRANSPARENT
+        } else {
+            background
+        })
+        .stroke(stroke)
 }
 
 /// Steps through the window's history with the mouse's side buttons, as a
@@ -953,6 +978,34 @@ mod idle_tests {
                 egui::Color32::from_rgba_unmultiplied(233, 237, 239, 32)
             )
         );
+    }
+
+    #[test]
+    fn conversation_skips_only_a_redundant_opaque_background() {
+        let root = tempfile::tempdir().unwrap();
+        let mut app = App::headless(
+            crate::paths::AppDirs::under(root.path()),
+            crate::settings::Settings::default(),
+        )
+        .0;
+        let chat = crate::model::Chat::new("test-chat".into(), "Test".into());
+        app.open_chat = Some(chat.id.clone());
+        app.chats.push(chat);
+        app.page = Page::Chats;
+        app.palette = crate::theme::Palette::dark();
+        assert_eq!(central_frame(&app).fill, egui::Color32::TRANSPARENT);
+
+        // A translucent wallpaper needs the original background underneath.
+        app.palette.chat = egui::Color32::from_rgba_premultiplied(12, 12, 12, 32);
+        assert_eq!(central_frame(&app).fill, central_background(&app));
+
+        // Staged attachments can replace the wallpaper with a review panel.
+        app.palette = crate::theme::Palette::dark();
+        app.stage(crate::app::Pending::File("test.txt".into()));
+        assert_eq!(central_frame(&app).fill, central_background(&app));
+
+        app.page = Page::Settings;
+        assert_eq!(central_frame(&app).fill, app.palette.panel);
     }
 
     #[test]
