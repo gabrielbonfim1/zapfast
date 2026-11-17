@@ -4633,6 +4633,11 @@ impl App {
                     self.actions.push(Action::SetDownloadFolder(Some(path)));
                 }
             }
+            Event::SaveFolderPicked(path) => {
+                if live {
+                    self.actions.push(Action::SetSaveFolder(Some(path)));
+                }
+            }
             Event::WallpaperImagePicked(Ok(path)) => {
                 // The copy may keep the earlier one's name: decode it anew.
                 self.account_mut().settings.wallpaper_image = Some(path);
@@ -8073,6 +8078,22 @@ impl App {
                 self.backend
                     .send(Command::SaveAttachmentAs { source: path, name });
             }
+            Action::SaveToFolder {
+                chat,
+                message,
+                path,
+                name,
+                mime,
+            } => {
+                self.backend.send(Command::SaveToFolder {
+                    chat,
+                    message,
+                    path,
+                    name,
+                    mime,
+                    folder: self.settings.save_folder(),
+                });
+            }
             Action::SaveAttachments { files } => {
                 self.backend.send(Command::SaveAttachments { files });
             }
@@ -9763,6 +9784,7 @@ impl App {
             }
             Action::PreviewSound(sound) => crate::notify::play_sound(sound),
             Action::PickDownloadFolder => self.backend.send(Command::PickDownloadFolder),
+            Action::PickSaveFolder => self.backend.send(Command::PickSaveFolder),
             Action::SetProfile { name, about } => {
                 self.backend.send(Command::SetProfile { name, about });
             }
@@ -9927,6 +9949,10 @@ impl App {
                         .backend
                         .send(Command::SetDownloadFolder(folder.clone()));
                 }
+            }
+            Action::SetSaveFolder(folder) => {
+                self.settings.save_folder = folder;
+                self.mark_settings_dirty();
             }
             Action::SetKeepChatsArchived(keep) => {
                 self.settings.keep_chats_archived = keep;
@@ -12349,6 +12375,7 @@ fn allowed_while_locked(action: &Action) -> bool {
             | Action::SetChatSound { .. }
             | Action::SetNotificationSound { .. }
             | Action::SetDownloadFolder(_)
+            | Action::SetSaveFolder(_)
     )
 }
 

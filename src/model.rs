@@ -2972,6 +2972,15 @@ pub enum Action {
         path: PathBuf,
         name: String,
     },
+    /// Saves a copy of a file into the save folder (Settings, `~/Downloads`
+    /// by default), downloading it first when it is not here yet.
+    SaveToFolder {
+        chat: ChatId,
+        message: String,
+        path: Option<PathBuf>,
+        name: String,
+        mime: String,
+    },
     /// Saves a group of downloaded album attachments into one chosen folder.
     SaveAttachments {
         files: Vec<(PathBuf, String)>,
@@ -3348,6 +3357,8 @@ pub enum Action {
     },
     /// Asks for a folder for new downloads.
     PickDownloadFolder,
+    /// Asks for the folder the Download button saves files into.
+    PickSaveFolder,
     /// Changes our display name and About text; `None` keeps the current one.
     SetProfile {
         name: Option<String>,
@@ -3381,6 +3392,8 @@ pub enum Action {
     RemoveGroupPicture(ChatId),
     /// Sets or resets (`None`) the folder for new downloads.
     SetDownloadFolder(Option<PathBuf>),
+    /// Sets or resets (`None`, `~/Downloads`) the Download button's folder.
+    SetSaveFolder(Option<PathBuf>),
     /// Keeps archived chats archived when a new message comes, or not.
     SetKeepChatsArchived(bool),
     /// Saves the proxy setting and reconnects. Empty follows the environment.

@@ -11148,6 +11148,9 @@ fn fit_within(size: Vec2, rect: Rect) -> Rect {
     Rect::from_center_size(rect.center(), size * scale)
 }
 
+/// The Download button's side on a file card.
+const SAVE_BUTTON: f32 = 28.0;
+
 #[allow(clippy::too_many_arguments)]
 fn attachment(
     ui: &mut egui::Ui,
@@ -11161,6 +11164,9 @@ fn attachment(
     actions: &mut Vec<Action>,
 ) {
     let palette = view.palette;
+    // A file gets a Download button that saves a copy into the save folder.
+    let saves = matches!(message.content, Content::Document { .. });
+    let mut save_button = None;
     let response = Frame::new()
         .fill(palette.window.gamma_multiply(0.35))
         .corner_radius(CornerRadius::same(8))
@@ -11186,6 +11192,8 @@ fn attachment(
                 (None, MediaState::Downloading) => {
                     theme::progress(ui, 18.0, download_fraction(view, message), palette.accent);
                 }
+                // The Download button beside it says the same.
+                (None, _) if saves => {}
                 (None, _) => {
                     theme::icon(ui, Icon::Download, 18.0, palette.secondary);
                 }
@@ -11193,8 +11201,10 @@ fn attachment(
             let column = |ui: &mut egui::Ui| {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    // Reserve 70 points for the icon, action, and gaps.
-                    ui.set_width((card - 70.0).max(0.0));
+                    // Reserve 70 points for the icon, action, and gaps, and
+                    // room for the Download button.
+                    let button = if saves { SAVE_BUTTON + 8.0 } else { 0.0 };
+                    ui.set_width((card - 70.0 - button).max(0.0));
                     widgets::rich_text(ui, title, theme::medium(14.0), palette.text);
                     let detail = match &media.state {
                         MediaState::Failed(error) => format!("{error}. Click to retry."),
@@ -11211,6 +11221,11 @@ fn attachment(
                     disc(ui);
                     column(ui);
                     action(ui);
+                    if saves {
+                        let (rect, _) =
+                            ui.allocate_exact_size(Vec2::splat(SAVE_BUTTON), Sense::hover());
+                        save_button = Some(rect);
+                    }
                 },
             );
         })
@@ -11240,6 +11255,36 @@ fn attachment(
             Sense::click(),
         )
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if let Some(rect) = save_button {
+        // Registered after the card, so it takes its own clicks.
+        let label = crate::i18n::gettext(view.locale, "Download");
+        let button = ui
+            .interact(rect, ui.id().with(("save", &message.id)), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+        let button = button.on_hover_text(label);
+        if button.hovered() {
+            ui.painter().circle_filled(
+                rect.center(),
+                SAVE_BUTTON / 2.0,
+                palette.accent.gamma_multiply(0.18),
+            );
+        }
+        theme::paint_icon(ui, Icon::Download, rect, 18.0, palette.accent);
+        if button.clicked() {
+            let name = attachment_name(
+                &message.content,
+                media.path.as_deref().unwrap_or(Path::new("attachment")),
+            );
+            actions.push(Action::SaveToFolder {
+                chat: view.chat.id.clone(),
+                message: message.id.clone(),
+                path: media.path.clone(),
+                name,
+                mime: media.mime.clone(),
+            });
+        }
+    }
     if response.clicked() && !auto {
         match &media.path {
             Some(path) => actions.push(Action::OpenFile(path.clone())),
@@ -12868,6 +12913,167 @@ mod tests {
             pin_notices: &[],
         };
         check(&view);
+    }
+
+    /// A file's Download button saves it, whether or not it is here yet,
+    /// and only a file has one.
+    #[test]
+    fn a_files_download_button_saves_it_under_its_name() {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let screen = Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 200.0));
+        let document = |path: Option<PathBuf>| {
+            let mut message = crate::archive::tests::message("1@s.whatsapp.net", "d1", 0, false);
+            message.content = Content::Document {
+                media: Media {
+                    mime: "application/pdf".into(),
+                    size: 4,
+                    path,
+                    ..media(None, None)
+                },
+                file_name: "Report.pdf".into(),
+                caption: None,
+                pages: None,
+            };
+            message
+        };
+        with_still_view(|view| {
+            let draw = |message: &Message, events: Vec<egui::Event>, time: f64| {
+                let mut actions = Vec::new();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        time: Some(time),
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        let Content::Document { media, .. } = &message.content else {
+                            unreachable!()
+                        };
+                        attachment(
+                            ui,
+                            view,
+                            message,
+                            media,
+                            Icon::FileText,
+                            "Report.pdf",
+                            "4 B",
+                            300.0,
+                            &mut actions,
+                        );
+                    },
+                );
+                output.textures_delta.clear();
+                actions
+            };
+            let button = || {
+                ctx.viewport(|viewport| {
+                    let widgets = &viewport.prev_pass.widgets;
+                    widgets
+                        .layers()
+                        .flat_map(|(_, rects)| rects.iter())
+                        .find(|rect| {
+                            rect.sense.senses_click()
+                                && rect.rect.size() == Vec2::splat(SAVE_BUTTON)
+                        })
+                        .map(|rect| rect.rect.center())
+                })
+            };
+            let click = |message: &Message, time: f64| {
+                draw(message, Vec::new(), time);
+                let at = button().expect("a file has a Download button");
+                let press = |pressed| egui::Event::PointerButton {
+                    pos: at,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                };
+                draw(
+                    message,
+                    vec![egui::Event::PointerMoved(at), press(true)],
+                    time + 1.0,
+                );
+                let actions = draw(message, vec![press(false)], time + 1.05);
+                assert!(
+                    !actions.iter().any(|action| matches!(
+                        action,
+                        Action::OpenFile(_) | Action::Download { manual: true, .. }
+                    )),
+                    "the button's click is not the card's"
+                );
+                actions
+            };
+            let saves = |actions: Vec<Action>| {
+                actions
+                    .into_iter()
+                    .filter_map(|action| match action {
+                        Action::SaveToFolder {
+                            message,
+                            path,
+                            name,
+                            mime,
+                            ..
+                        } => Some((message, path, name, mime)),
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>()
+            };
+            let here = PathBuf::from("/cache/d1-Report.pdf");
+            assert_eq!(
+                saves(click(&document(Some(here.clone())), 10.0)),
+                [(
+                    "d1".to_owned(),
+                    Some(here),
+                    "Report.pdf".to_owned(),
+                    "application/pdf".to_owned()
+                )]
+            );
+            assert_eq!(
+                saves(click(&document(None), 20.0)),
+                [(
+                    "d1".to_owned(),
+                    None,
+                    "Report.pdf".to_owned(),
+                    "application/pdf".to_owned()
+                )],
+                "a file not here yet is saved once it downloads"
+            );
+            // A video drawn as a file card is not a file.
+            let mut video = document(None);
+            video.content = Content::Video {
+                media: media(None, None),
+                seconds: None,
+                gif: false,
+                note: false,
+                caption: None,
+            };
+            let Content::Video { media: clip, .. } = &video.content else {
+                unreachable!()
+            };
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    time: Some(30.0),
+                    ..Default::default()
+                },
+                |ui| {
+                    attachment(
+                        ui,
+                        view,
+                        &video,
+                        clip,
+                        Icon::Video,
+                        "Video",
+                        "",
+                        300.0,
+                        &mut Vec::new(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            assert!(button().is_none(), "only a file has a Download button");
+        });
     }
 
     #[test]

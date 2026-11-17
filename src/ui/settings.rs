@@ -863,6 +863,44 @@ fn sections(app: &App) -> Vec<Section> {
             }
         },
     );
+    let saving = app.settings.save_folder.clone();
+    let saved = app.settings.save_folder();
+    let open_saved = crate::i18n::gettext(locale, "Open folder");
+    files.row(
+        translated(locale, "Save files to"),
+        saved.display().to_string(),
+        move |ui, app| {
+            if theme::soft_button(ui, &palette, Some(Icon::ExternalLink), &open_saved, false)
+                .clicked()
+            {
+                let _ = std::fs::create_dir_all(&saved);
+                app.actions.push(Action::OpenFolder(saved.clone()));
+            }
+            if theme::soft_button(
+                ui,
+                &palette,
+                None,
+                &crate::i18n::gettext(app.locale, "Change…"),
+                false,
+            )
+            .clicked()
+            {
+                app.actions.push(Action::PickSaveFolder);
+            }
+            if saving.is_some()
+                && theme::soft_button(
+                    ui,
+                    &palette,
+                    None,
+                    &crate::i18n::gettext(app.locale, "Use default"),
+                    false,
+                )
+                .clicked()
+            {
+                app.actions.push(Action::SetSaveFolder(None));
+            }
+        },
+    );
     files.block(
         vec![
             translated(locale, "Storage used"),

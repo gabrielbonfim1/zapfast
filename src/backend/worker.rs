@@ -1042,6 +1042,7 @@ pub async fn run(
         presence_subscribed: HashSet::new(),
         download_folder: None,
         cleaned_download_folders: HashSet::new(),
+        pending_saves: HashMap::new(),
         keep_chats_archived: true,
         phone_unarchive_chats,
         phone_unarchive_unread,
@@ -1622,6 +1623,9 @@ struct Worker {
     download_folder: Option<PathBuf>,
     /// Clean each chosen root once, before this worker can start downloads there.
     cleaned_download_folders: HashSet<PathBuf>,
+    /// Files the Download button asked for before they were here, by chat
+    /// and message: the folder and name their copy goes to once downloaded.
+    pending_saves: HashMap<(ChatId, String), SaveRequest>,
     /// Settings' "Keep chats archived", for an account whose phone has not
     /// sent its own. Off, a new message unarchives its chat here, as the
     /// phone does; WhatsApp sends no mutation for it.
@@ -7807,6 +7811,37 @@ impl Worker {
                     }
                 });
             }
+            Command::PickSaveFolder => {
+                let events = self.events.clone();
+                let waker = self.waker.clone();
+                tokio::task::spawn_blocking(move || {
+                    if let Some(path) = rfd::FileDialog::new()
+                        .set_title("Choose a folder for saved files")
+                        .pick_folder()
+                    {
+                        let _ = events.send(Event::SaveFolderPicked(path));
+                        waker.wake();
+                    }
+                });
+            }
+            Command::SaveToFolder {
+                chat,
+                message,
+                path,
+                name,
+                mime,
+                folder,
+            } => {
+                let request = SaveRequest { folder, name, mime };
+                match path.filter(|path| path.is_file()) {
+                    Some(source) => self.save_copy(source, request),
+                    None => {
+                        self.pending_saves
+                            .insert((chat.clone(), message.clone()), request);
+                        self.download_media(chat, message, None, true);
+                    }
+                }
+            }
             Command::PickWallpaperImage => {
                 let dirs = self.dirs.clone();
                 let events = self.events.clone();
@@ -10625,6 +10660,17 @@ impl Worker {
     }
 
     /// Files the result and releases any picker request that started it.
+    /// Copies a downloaded file into the Download button's folder off the
+    /// runtime's threads.
+    fn save_copy(&self, source: PathBuf, request: SaveRequest) {
+        let events = self.events.clone();
+        let waker = self.waker.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = events.send(save_to_folder(&source, &request));
+            waker.wake();
+        });
+    }
+
     fn downloaded(
         &mut self,
         chat: ChatId,
@@ -10668,6 +10714,13 @@ impl Worker {
                 .insert((chat.clone(), id.clone()));
         }
         let result_ok = result.is_ok();
+        if card.is_none()
+            && let Some(request) = self.pending_saves.remove(&(chat.clone(), id.clone()))
+            && let Ok(source) = &result
+        {
+            // A failed download says so in its bubble; only an arrival saves.
+            self.save_copy(source.clone(), request);
+        }
         self.emit(Event::Media {
             card,
             chat,
@@ -12549,6 +12602,41 @@ fn media_path(dir: &Path, chat: &str, id: &str, mime: &str, file_name: Option<&s
     // extension only alphanumerics and '-'. The single literal dot cannot create
     // a path component, drive prefix or alternate data stream on either OS.
     dir.join(format!("{stem}.{extension}"))
+}
+
+/// Where the Download button's copy of a file goes, and under what name.
+#[derive(Debug, Clone, PartialEq)]
+struct SaveRequest {
+    folder: PathBuf,
+    /// The sender's name for the file, made safe before it is used.
+    name: String,
+    mime: String,
+}
+
+/// Copies `source` into the request's folder (made when missing) under the
+/// file's own name made safe ([`named_media_path`]), numbered when that name
+/// is taken, and says where it went.
+fn save_to_folder(source: &Path, request: &SaveRequest) -> Event {
+    let SaveRequest { folder, name, mime } = request;
+    let safe = named_media_path(Path::new(""), mime, name)
+        .or_else(|| named_media_path(Path::new(""), mime, "file"))
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".to_owned());
+    let saved =
+        std::fs::create_dir_all(folder).and_then(|()| save_album_copy(source, folder, &safe));
+    match saved {
+        Ok(target) => {
+            let file = target
+                .file_name()
+                .map_or_else(|| safe.clone(), |file| file.to_string_lossy().into_owned());
+            let place = folder.file_name().map_or_else(
+                || folder.display().to_string(),
+                |place| place.to_string_lossy().into_owned(),
+            );
+            Event::Info(format!("Saved {file} to {place}"))
+        }
+        Err(error) => Event::Error(format!("Could not save the file: {error}")),
+    }
 }
 
 /// Reserve each destination atomically, including when another save is racing
@@ -20350,6 +20438,167 @@ mod receipt_tests {
         assert!(worker.forward_queue.is_none());
     }
 
+    fn document_without_file(worker: &Worker, chat: &str, id: &str) {
+        use crate::model::{Content, Media, MediaState};
+        worker.archive.ensure_chat(chat, "A").expect("chat");
+        let mut message = crate::archive::tests::message(chat, id, 10, false);
+        message.content = Content::Document {
+            media: Media {
+                mime: "application/pdf".into(),
+                size: 4,
+                width: None,
+                height: None,
+                album: None,
+                path: None,
+                state: MediaState::Idle,
+            },
+            file_name: "Report.pdf".into(),
+            caption: None,
+            pages: None,
+        };
+        worker
+            .archive
+            .insert_message(&message, None)
+            .expect("inserted");
+    }
+
+    fn saved_note(events: &std::sync::mpsc::Receiver<Event>) -> Option<Event> {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+            match events.recv_timeout(left) {
+                Ok(event @ (Event::Info(_) | Event::Error(_))) => return Some(event),
+                Ok(_) => {}
+                Err(_) => break,
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn the_download_button_saves_a_safe_numbered_copy() {
+        let root = tempfile::tempdir().expect("temp");
+        let source = root.path().join("cached-abc.pdf");
+        std::fs::write(&source, b"%PDF").expect("source");
+        // The folder is made when missing, as a fresh ~/Downloads may be.
+        let folder = root.path().join("Downloads");
+        let request = |name: &str| SaveRequest {
+            folder: folder.clone(),
+            name: name.into(),
+            mime: "application/pdf".into(),
+        };
+        let event = save_to_folder(&source, &request("Report.pdf"));
+        assert!(
+            matches!(&event, Event::Info(text) if text == "Saved Report.pdf to Downloads"),
+            "{event:?}"
+        );
+        let event = save_to_folder(&source, &request("Report.pdf"));
+        assert!(
+            matches!(&event, Event::Info(text) if text == "Saved Report (2).pdf to Downloads"),
+            "a taken name is numbered, never overwritten: {event:?}"
+        );
+        assert_eq!(
+            std::fs::read(folder.join("Report (2).pdf")).expect("copy"),
+            b"%PDF"
+        );
+        // The sender's name cannot leave the folder or name a device.
+        save_to_folder(&source, &request("../../.bashrc.pdf"));
+        assert!(folder.join("bashrc.pdf").is_file());
+        assert!(!root.path().join(".bashrc.pdf").exists());
+        save_to_folder(&source, &request("con.pdf"));
+        assert!(folder.join("_con.pdf").is_file());
+        save_to_folder(&source, &request("..."));
+        assert!(
+            folder.join("file.pdf").is_file(),
+            "an empty name still saves"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_file_saved_before_it_arrives_is_copied_once_downloaded() {
+        let (mut worker, events, _commands, _wa) = worker();
+        let chat = "a@s.whatsapp.net".to_owned();
+        document_without_file(&worker, &chat, "d1");
+        let root = tempfile::tempdir().expect("temp");
+        let folder = root.path().join("Downloads");
+        worker.pending_saves.insert(
+            (chat.clone(), "d1".into()),
+            SaveRequest {
+                folder: folder.clone(),
+                name: "Report.pdf".into(),
+                mime: "application/pdf".into(),
+            },
+        );
+        let downloaded = root.path().join("cache.pdf");
+        std::fs::write(&downloaded, b"%PDF").expect("file");
+        worker
+            .handle_command(Command::Downloaded {
+                card: None,
+                chat: chat.clone(),
+                id: "d1".into(),
+                result: Ok(downloaded),
+            })
+            .await;
+        assert!(worker.pending_saves.is_empty());
+        assert!(matches!(saved_note(&events), Some(Event::Info(_))));
+        assert_eq!(
+            std::fs::read(folder.join("Report.pdf")).expect("copy"),
+            b"%PDF"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_download_saves_nothing_and_forgets_the_save() {
+        let (mut worker, events, _commands, _wa) = worker();
+        let chat = "a@s.whatsapp.net".to_owned();
+        document_without_file(&worker, &chat, "d1");
+        let root = tempfile::tempdir().expect("temp");
+        let folder = root.path().join("Downloads");
+        worker.pending_saves.insert(
+            (chat.clone(), "d1".into()),
+            SaveRequest {
+                folder: folder.clone(),
+                name: "Report.pdf".into(),
+                mime: "application/pdf".into(),
+            },
+        );
+        worker
+            .handle_command(Command::Downloaded {
+                card: None,
+                chat: chat.clone(),
+                id: "d1".into(),
+                result: Err("gone".into()),
+            })
+            .await;
+        assert!(worker.pending_saves.is_empty());
+        assert!(
+            saved_note(&events).is_none(),
+            "the bubble reports the failure"
+        );
+        assert!(!folder.exists());
+    }
+
+    #[tokio::test]
+    async fn the_download_button_copies_a_file_already_here() {
+        let (mut worker, events, _commands, _wa) = worker();
+        let root = tempfile::tempdir().expect("temp");
+        let source = root.path().join("cache.pdf");
+        std::fs::write(&source, b"%PDF").expect("file");
+        let folder = root.path().join("Downloads");
+        worker
+            .handle_command(Command::SaveToFolder {
+                chat: "a@s.whatsapp.net".into(),
+                message: "d1".into(),
+                path: Some(source),
+                name: "Report.pdf".into(),
+                mime: "application/pdf".into(),
+                folder: folder.clone(),
+            })
+            .await;
+        assert!(worker.pending_saves.is_empty(), "no download is needed");
+        assert!(matches!(saved_note(&events), Some(Event::Info(_))));
+        assert!(folder.join("Report.pdf").is_file());
+    }
+
     pub(super) fn worker() -> (
         Worker,
         std::sync::mpsc::Receiver<Event>,
@@ -20424,6 +20673,7 @@ mod receipt_tests {
             presence_subscribed: HashSet::new(),
             download_folder: None,
             cleaned_download_folders: HashSet::new(),
+            pending_saves: HashMap::new(),
             keep_chats_archived: true,
             phone_unarchive_chats: None,
             phone_unarchive_unread: false,

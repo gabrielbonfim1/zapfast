@@ -496,6 +496,9 @@ pub struct Settings {
     /// Folder for new downloads. `None` keeps them in the cache. Files
     /// already downloaded stay where they are when this changes.
     pub download_folder: Option<std::path::PathBuf>,
+    /// Folder the Download button on a file saves a copy into. `None` is the
+    /// system's Downloads folder (`~/Downloads`).
+    pub save_folder: Option<std::path::PathBuf>,
     /// Archived chats stay archived when a message arrives or is sent, as
     /// with the phone's "Keep chats archived". Off, a new message brings the
     /// chat back to the list.
@@ -586,6 +589,7 @@ impl Default for Settings {
             mention_sound: NotificationSound::Alert,
             group_sounds: true,
             download_folder: None,
+            save_folder: None,
             keep_chats_archived: true,
             proxy: String::new(),
             check_for_updates: true,
@@ -624,6 +628,12 @@ pub const BUILT_IN_GIPHY_KEY: Option<&str> = match option_env!("ZAPFAST_GIPHY_KE
 };
 
 impl Settings {
+    /// Where the Download button on a file saves its copy: the chosen folder,
+    /// else the system's Downloads folder.
+    pub fn save_folder(&self) -> std::path::PathBuf {
+        self.save_folder.clone().unwrap_or_else(default_save_folder)
+    }
+
     pub fn wallpaper_color_for(&self, dark: bool) -> WallpaperColor {
         if dark {
             self.dark_wallpaper_color
@@ -967,6 +977,16 @@ impl AccountRoster {
         self.active = id.0.clone();
         id
     }
+}
+
+/// The system's Downloads folder (`~/Downloads`), else one under the home
+/// folder where the system names none.
+pub fn default_save_folder() -> std::path::PathBuf {
+    let dirs = directories::UserDirs::new();
+    dirs.as_ref()
+        .and_then(|dirs| dirs.download_dir().map(std::path::Path::to_path_buf))
+        .or_else(|| dirs.map(|dirs| dirs.home_dir().join("Downloads")))
+        .unwrap_or_else(|| std::path::PathBuf::from("Downloads"))
 }
 
 #[cfg(test)]

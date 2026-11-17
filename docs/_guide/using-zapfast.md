@@ -514,7 +514,10 @@ forwards, saves or downloads, and shows the message in the chat. A click on the
 empty space around the picture, or Escape, closes the viewer. It also closes
 when its chat is removed, becomes locked outside the unlocked folder, or when
 you close the locked folder. **Save as…** in a downloaded attachment's
-right-click menu keeps a copy wherever you choose.
+right-click menu keeps a copy wherever you choose. A file in a chat has a
+download button beside it that saves a copy straight into your Downloads
+folder, downloading the file first if it is not here yet; **Settings > Files >
+Save files to** changes that folder.
 
 A motion photo has a play button in its corner. Click it to download the short
 clip to the local cache and play it over the photo, muted and in a loop; click

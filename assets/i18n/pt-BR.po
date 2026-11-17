@@ -4097,6 +4097,10 @@ msgstr "Reproduzida"
 msgid "not sent"
 msgstr "Enter envia"
 
+#: src/ui/settings.rs
+msgid "Save files to"
+msgstr "Salvar arquivos em"
+
 #~ msgid "Back to the chats"
 #~ msgstr "Voltar para as conversas"
 

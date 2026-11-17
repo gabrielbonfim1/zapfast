@@ -650,6 +650,8 @@ pub enum Command {
     },
     /// Asks for a folder for new downloads.
     PickDownloadFolder,
+    /// Asks for the folder the Download button saves files into.
+    PickSaveFolder,
     /// Asks for a wallpaper image and copies it into the state directory.
     PickWallpaperImage,
     /// Deletes the copied wallpaper image.
@@ -751,6 +753,16 @@ pub enum Command {
     /// The machine woke up from sleep: a link open across it can still look
     /// established while nothing arrives, so reconnect it now.
     Resumed,
+    /// Copies a file into `folder` under its own name (numbered when taken),
+    /// downloading it first when `path` is not here yet.
+    SaveToFolder {
+        chat: ChatId,
+        message: String,
+        path: Option<std::path::PathBuf>,
+        name: String,
+        mime: String,
+        folder: std::path::PathBuf,
+    },
     /// Asks where to save a copy of an attachment, then copies it there.
     SaveAttachmentAs {
         source: std::path::PathBuf,
@@ -1510,6 +1522,8 @@ pub enum Event {
     },
     /// A folder chosen for new downloads.
     DownloadFolderPicked(std::path::PathBuf),
+    /// A folder chosen for the Download button's copies.
+    SaveFolderPicked(std::path::PathBuf),
     /// The copy of a chosen wallpaper image, or why it could not be used.
     WallpaperImagePicked(Result<std::path::PathBuf, String>),
     /// An audio file chosen as a notification sound.

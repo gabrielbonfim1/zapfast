@@ -53,6 +53,12 @@ publishing the downloaded file fails. Restarting removes unfinished downloads
 from that account's chat folders, without following linked folders.
 If an account or chat folder is a symbolic link, new downloads use the cache
 instead.
+The download button on a file in a chat keeps a copy in your Downloads folder
+(`~/Downloads`, or the system's own Downloads folder), downloading the file
+first if needed. The copy keeps the name the file was sent with, made safe for
+the file system, and a name already taken there becomes `Name (2)`, and so on;
+nothing is overwritten. **Settings > Files > Save files to > Change…** picks
+another folder, and **Use default** goes back to Downloads.
 Documents keep the name they were sent with; a
 file already in the folder is never replaced, and the download becomes
 `name (1).pdf`, `name (2).pdf`, and so on. Characters a file system refuses
@@ -259,7 +265,9 @@ name or description, in the interface language or in English.
 
 **Account** edits your WhatsApp name, About, and picture, and unlinks this
 computer. **Files** shows the archive, the downloads folder (which you can
-change; earlier downloads stay where they are), and this run's log.
+change; earlier downloads stay where they are), the folder the download
+button on a file saves into (Downloads unless you change it), and this run's
+log.
 
 Some choices are made where they are used and remembered in `settings.json`:
 the shortcut hints bar under the composer (its × hides it, and **Show shortcut
