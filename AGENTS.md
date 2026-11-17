@@ -708,6 +708,26 @@ egui pitfalls this code has already hit:
   transcript viewport (the chat header shares its layer) and opens
   `Popup::menu` itself, so the menu comes up anywhere on the message.
 
+## This fork
+
+This checkout is the fork `gabrielbonfim1/zapfast` (`origin`), which follows
+`crmne/zapfast` (`upstream`). Where this section and the rest of this guide
+disagree, this section wins here.
+
+- Sync with upstream by merging: `git fetch upstream` then
+  `git merge --no-ff upstream/main` into `main`, with a message like
+  "Sincroniza o fork com o crmne/zapfast até a vX.Y.Z". These sync merge
+  commits are allowed and expected; the "never create merge commits" and
+  "keep `main` linear" rules under Branches apply to upstream, not to this
+  fork.
+- Never rebase the fork's own commits onto upstream or force-push: they are
+  already published on `origin`.
+- Resolve conflicts in favour of upstream unless the fork's change is
+  deliberate (its own workflow, `CLAUDE.md`, this section, and features made
+  here), and build before pushing the merge.
+- Keep fork-only rules in this section, so upstream's edits to the rest of
+  the guide merge cleanly.
+
 ## Branches
 
 Use trunk-based development. Work on `main` and keep releasable work there.
